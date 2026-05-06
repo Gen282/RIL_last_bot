@@ -208,5 +208,12 @@ def main():
             print(f"Ошибка: {e}")
         time.sleep(1)
 
-if __name__ == "__main__":
-    main()
+f __name__ == "__main__":
+    # Запускаем Flask в отдельном потоке, чтобы Render видел порт
+    def run_flask():
+        app.run(host='0.0.0.0', port=8080)
+    
+    Thread(target=run_flask).start()
+    
+    # Запускаем основного бота
+    main()
