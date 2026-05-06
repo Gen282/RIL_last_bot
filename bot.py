@@ -6,8 +6,14 @@ from datetime import datetime
 from flask import Flask
 from threading import Thread
 
-BOT_TOKEN = "8646996759:AAH1D-xXzOekPUs2G1hr-9QjcxjX_D5BYwg"
+# ========== НАСТРОЙКИ ==========
+BOT_TOKEN = os.environ.get("8784207665:AAFWCkHSD1p2qKEJj76sknIUOPKYw8sXo3E")
 ADMIN_ID = 8296841503
+
+if not BOT_TOKEN:
+    print("❌ Ошибка: BOT_TOKEN не найден в переменных окружения")
+    exit(1)
+# ================================
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 last_update_id = 0
@@ -36,20 +42,39 @@ def get_num():
         f.write(str(n))
     return n
 
-def save_order(oid, data):
-    orders = {}
+def load_orders():
     if os.path.exists(orders_file):
         with open(orders_file, 'r', encoding='utf-8') as f:
-            orders = json.load(f)
+            return json.load(f)
+    return {}
+
+def save_order(oid, data):
+    orders = load_orders()
     orders[str(oid)] = data
     with open(orders_file, 'w', encoding='utf-8') as f:
         json.dump(orders, f, ensure_ascii=False, indent=2)
+
+def delete_order(oid):
+    orders = load_orders()
+    if str(oid) in orders:
+        del orders[str(oid)]
+        with open(orders_file, 'w', encoding='utf-8') as f:
+            json.dump(orders, f, ensure_ascii=False, indent=2)
+        return True
+    return False
+
+def clear_all_orders():
+    with open(orders_file, 'w', encoding='utf-8') as f:
+        json.dump({}, f, ensure_ascii=False, indent=2)
 
 def send_message(chat_id, text, keyboard=None):
     data = {"chat_id": chat_id, "text": text}
     if keyboard:
         data["reply_markup"] = keyboard
     requests.post(f"{API_URL}/sendMessage", json=data)
+
+def send_admin_message(chat_id, text):
+    requests.post(f"{API_URL}/sendMessage", json={"chat_id": ADMIN_ID, "text": text})
 
 user_states = {}
 
@@ -62,9 +87,51 @@ def process_update(update):
         chat_id = msg['chat']['id']
         text = msg.get('text', '')
 
+        # Обработка команд админа
+        if chat_id == ADMIN_ID and text.startswith('/'):
+            if text == '/list_orders':
+                orders = load_orders()
+                if not orders:
+                    send_message(chat_id, "📭 Список заказов пуст.")
+                    return
+                
+                # Показать последние 10 заказов
+                recent = list(orders.keys())[-10:]
+                result = "📋 **Последние заказы:**\n\n"
+                for oid in reversed(recent):
+                    order = orders[oid]
+                    result += f"🔹 Заказ №{oid}\n   Клиент: {order.get('user_name', '-')}\n   Создан: {order.get('created', '-')[:16]}\n\n"
+                send_message(chat_id, result)
+                return
+            
+            elif text.startswith('/delete_order'):
+                parts = text.split()
+                if len(parts) != 2:
+                    send_message(chat_id, "❌ Использование: /delete_order НОМЕР")
+                    return
+                try:
+                    oid = int(parts[1])
+                    if delete_order(oid):
+                        send_message(chat_id, f"✅ Заказ №{oid} удалён.")
+                    else:
+                        send_message(chat_id, f"❌ Заказ №{oid} не найден.")
+                except ValueError:
+                    send_message(chat_id, "❌ Номер должен быть числом.")
+                return
+            
+            elif text == '/clear_orders':
+                clear_all_orders()
+                send_message(chat_id, "🗑️ Все заказы удалены.")
+                return
+            
+            elif text == '/start':
+                send_message(chat_id, "👋 Привет, админ! Доступные команды:\n/list_orders - список заказов\n/delete_order N - удалить заказ №N\n/clear_orders - удалить все заказы")
+                return
+
+        # Обработка клиентов
         if text == '/start':
             keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
-            send_message(chat_id, "👋 Бот готов! Нажмите «Новый заказ»:", keyboard)
+            send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
             user_states.pop(chat_id, None)
             return
 
@@ -101,9 +168,9 @@ def process_update(update):
                 'created': datetime.now().isoformat()
             }
             save_order(num, order)
-            send_message(chat_id, f"✅ Заказ №{num} принят! Администратор свяжется с вами.")
+            send_message(chat_id, f"✅ Заказ №{num} принят!\nСпасибо, администратор свяжется с вами.")
             admin_text = f"🛒 НОВЫЙ ЗАКАЗ №{num}\n\nКлиент: {msg['chat'].get('first_name', '')}\nСсылка: {state['link']}\nИмя: {state['name']}\nАдрес: {state['address']}\nТелефон: {text}"
-            requests.post(f"{API_URL}/sendMessage", json={"chat_id": ADMIN_ID, "text": admin_text})
+            send_admin_message(chat_id, admin_text)
             user_states.pop(chat_id, None)
 
     elif 'callback_query' in update:
