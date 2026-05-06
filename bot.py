@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import time
+import fcntl
 from datetime import datetime
 from flask import Flask
 from threading import Thread
@@ -10,6 +11,14 @@ from threading import Thread
 BOT_TOKEN = "8646996759:AAH1D-xXzOekPUs2G1hr-90jcxjX_D5BYwg"
 ADMIN_ID = 8296841503
 # ======================================
+
+# БЛОКИРОВКА ОТ ДВОЙНОГО ЗАПУСКА
+try:
+    lock_file = open("bot.lock", "w")
+    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except:
+    print("❌ Бот уже запущен (другой процесс). Выход.")
+    exit(0)
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 last_update_id = 0
@@ -100,7 +109,6 @@ def process_update(update):
         chat_id = msg['chat']['id']
         text = msg.get('text', '')
 
-        # Админ-команды
         if chat_id == ADMIN_ID and text.startswith('/'):
             if text == '/list_orders':
                 send_message(chat_id, get_orders_list())
@@ -127,7 +135,6 @@ def process_update(update):
                 send_message(chat_id, "👋 Админ-панель: /list_orders, /delete_order N, /clear_orders")
                 return
 
-        # Клиенты
         if text == '/start':
             keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
             send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
@@ -184,7 +191,7 @@ def process_update(update):
 
 def main():
     global last_update_id
-    print("🚀 Бот запущен!")
+    print("🚀 Бот запущен (единственный процесс)!")
     while True:
         try:
             response = requests.get(f"{API_URL}/getUpdates", params={"offset": last_update_id + 1, "timeout": 30})
