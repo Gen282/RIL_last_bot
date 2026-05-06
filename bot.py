@@ -7,7 +7,7 @@ from flask import Flask
 from threading import Thread
 
 # ========== ТОКЕН ВСТАВЛЕН ПРЯМО В КОД (как вчера) ==========
-BOT_TOKEN = "8646996759:AAH1D-xXzOekPUs2G1hr-90jcxjX_D5BYwg"
+BOT_TOKEN = "8784207665:AAFWCkHSD1p2qKEJj76sknIUOPKYw8sXo3E"
 ADMIN_ID = 8296841503
 # ==============================================================
 
