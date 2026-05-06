@@ -7,12 +7,11 @@ from flask import Flask
 from threading import Thread
 
 # ========== ТОКЕН ВСТАВЬ СВОЙ ==========
-BOT_TOKEN = "8784207665:AAFWCkHSD1p2qKEJj76sknIUOPKYw8sXo3E"
+BOT_TOKEN = "8646996759:AAH1D-xXzOekPUs2G1hr-90jcxjX_D5BYwg"
 ADMIN_ID = 8296841503
 # ======================================
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-last_update_id = 0
 counter_file = "counter.txt"
 orders_file = "orders.json"
 
@@ -86,10 +85,17 @@ def send_message(chat_id, text, keyboard=None):
     requests.post(f"{API_URL}/sendMessage", json=data)
 
 user_states = {}
+last_update_id = 0
+already_started = False
 
 def process_update(update):
     global last_update_id
-    last_update_id = update['update_id']
+    update_id = update['update_id']
+    
+    if update_id <= last_update_id:
+        return
+    
+    last_update_id = update_id
 
     if 'message' in update:
         msg = update['message']
@@ -118,6 +124,9 @@ def process_update(update):
             elif text == '/clear_orders':
                 clear_all_orders()
                 send_message(chat_id, "🗑️ Все заказы удалены!")
+                return
+            elif text == '/start':
+                send_message(chat_id, "👋 Привет, админ! Команды: /list_orders, /delete_order N, /clear_orders")
                 return
 
         # Обычные пользователи
@@ -176,7 +185,23 @@ def process_update(update):
             requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
 
 def main():
-    global last_update_id
+    global last_update_id, already_started
+    
+    # Защита от двойного запуска
+    if already_started:
+        print("⚠️ Бот уже запущен, пропускаем...")
+        return
+    already_started = True
+    
+    # Сброс старых обновлений
+    print("🔄 Очистка старых обновлений...")
+    response = requests.get(f"{API_URL}/getUpdates", params={"offset": -1, "timeout": 1})
+    if response.status_code == 200:
+        data = response.json()
+        if data.get('ok') and data.get('result'):
+            last_update_id = data['result'][-1]['update_id']
+    print(f"✅ Стартовый update_id: {last_update_id}")
+    
     print("🚀 Бот запущен!")
     while True:
         try:
