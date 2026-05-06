@@ -2,41 +2,18 @@ import requests
 import json
 import os
 import time
-import atexit
 from datetime import datetime
 from flask import Flask
 from threading import Thread
 
-# ========== ТОКЕН ==========
 BOT_TOKEN = "8784207665:AAFWCkHSD1p2qKEJj76sknIUOPKYw8sXo3E"
 ADMIN_ID = 8296841503
-# ===========================
-
-# БЛОКИРОВКА ДЛЯ ОДНОГО ПРОЦЕССА
-PID_FILE = "bot.pid"
-
-def is_running():
-    if os.path.exists(PID_FILE):
-        with open(PID_FILE, 'r') as f:
-            old_pid = f.read().strip()
-            if old_pid.isdigit() and os.path.exists(f"/proc/{old_pid}"):
-                return True
-    return False
-
-def write_pid():
-    with open(PID_FILE, 'w') as f:
-        f.write(str(os.getpid()))
-
-if is_running():
-    print("⚠️ Бот уже запущен, выходим...")
-    exit(0)
-write_pid()
-atexit.register(lambda: os.remove(PID_FILE) if os.path.exists(PID_FILE) else None)
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 last_update_id = 0
 counter_file = "counter.txt"
 orders_file = "orders.json"
+processed_ids_file = "processed_ids.txt"
 
 app = Flask('')
 
@@ -105,11 +82,27 @@ def send_message(chat_id, text, keyboard=None):
         data["reply_markup"] = keyboard
     requests.post(f"{API_URL}/sendMessage", json=data)
 
+def is_processed(update_id):
+    if not os.path.exists(processed_ids_file):
+        return False
+    with open(processed_ids_file, 'r') as f:
+        return str(update_id) in f.read().splitlines()
+
+def mark_processed(update_id):
+    with open(processed_ids_file, 'a') as f:
+        f.write(f"{update_id}\n")
+
 user_states = {}
 
 def process_update(update):
     global last_update_id
+    
     update_id = update['update_id']
+    
+    if is_processed(update_id):
+        return
+    mark_processed(update_id)
+    
     if update_id <= last_update_id:
         return
     last_update_id = update_id
@@ -119,7 +112,6 @@ def process_update(update):
         chat_id = msg['chat']['id']
         text = msg.get('text', '')
 
-        # АДМИН
         if chat_id == ADMIN_ID and text.startswith('/'):
             if text == '/list_orders':
                 send_message(chat_id, get_orders_list())
@@ -146,7 +138,6 @@ def process_update(update):
                 send_message(chat_id, "👋 Админ-панель: /list_orders, /delete_order N, /clear_orders")
                 return
 
-        # КЛИЕНТЫ
         if text == '/start':
             keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
             send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
@@ -203,7 +194,7 @@ def process_update(update):
 
 def main():
     global last_update_id
-    print("🚀 Бот запущен (один процесс)!")
+    print("🚀 Бот запущен с защитой от дублей!")
     while True:
         try:
             response = requests.get(f"{API_URL}/getUpdates", params={"offset": last_update_id + 1, "timeout": 30})
