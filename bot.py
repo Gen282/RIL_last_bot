@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from flask import Flask
 from threading import Thread
+from collections import defaultdict
 
 # ========== ТОКЕН ВСТАВЬ СВОЙ ==========
 BOT_TOKEN = "8784207665:AAFWCkHSD1p2qKEJj76sknIUOPKYw8sXo3E"
@@ -39,7 +40,6 @@ def get_num():
     return n
 
 def load_orders():
-    """Загружает все заказы из файла"""
     if os.path.exists(orders_file):
         with open(orders_file, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -52,7 +52,6 @@ def save_order(oid, data):
         json.dump(orders, f, ensure_ascii=False, indent=2)
 
 def delete_order(oid):
-    """Удаляет заказ по номеру"""
     orders = load_orders()
     if str(oid) in orders:
         del orders[str(oid)]
@@ -62,17 +61,14 @@ def delete_order(oid):
     return False
 
 def clear_all_orders():
-    """Удаляет ВСЕ заказы"""
     with open(orders_file, 'w', encoding='utf-8') as f:
         json.dump({}, f, ensure_ascii=False, indent=2)
 
 def get_orders_list():
-    """Возвращает список последних 10 заказов для админа"""
     orders = load_orders()
     if not orders:
         return "📭 Список заказов пуст."
     
-    # Сортируем по номеру заказа (по убыванию - новые сверху)
     sorted_orders = sorted(orders.items(), key=lambda x: int(x[0]), reverse=True)
     recent = sorted_orders[:10]
     
@@ -92,7 +88,20 @@ def send_message(chat_id, text, keyboard=None):
 
 user_states = {}
 
-# Множество для отслеживания обработанных update_id
+# Кэш для отслеживания отправленных ответов
+message_cache = defaultdict(set)
+
+def already_responded(chat_id, message_text):
+    """Проверяет, не отвечали ли уже на это сообщение"""
+    message_hash = hash(message_text[:50])
+    if message_hash in message_cache[chat_id]:
+        return True
+    message_cache[chat_id].add(message_hash)
+    # Ограничиваем размер кэша
+    if len(message_cache[chat_id]) > 100:
+        message_cache[chat_id] = set(list(message_cache[chat_id])[-50:])
+    return False
+
 processed_updates = set()
 
 def process_update(update):
@@ -100,14 +109,11 @@ def process_update(update):
     
     update_id = update['update_id']
     
-    # Если это обновление уже обработано - пропускаем
     if update_id in processed_updates:
         return
     
-    # Добавляем в обработанные
     processed_updates.add(update_id)
     
-    # Ограничиваем размер множества (оставляем последние 1000)
     if len(processed_updates) > 1000:
         to_remove = list(processed_updates)[:500]
         for uid in to_remove:
@@ -115,7 +121,6 @@ def process_update(update):
     
     last_update_id = update_id
 
-    # Обработка обычных сообщений
     if 'message' in update:
         msg = update['message']
         chat_id = msg['chat']['id']
@@ -163,31 +168,42 @@ def process_update(update):
 
         # ===== КЛИЕНТСКИЕ КОМАНДЫ =====
         if text == '/start':
+            # Проверяем, не отправляли ли уже приветствие этому пользователю
+            if already_responded(chat_id, 'start_response'):
+                return
+            
             keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
             send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
             user_states.pop(chat_id, None)
             return
 
-        # Обработка шагов оформления заказа
         state = user_states.get(chat_id, {})
         step = state.get('step', 0)
 
         if step == 1:
+            if already_responded(chat_id, 'step1'):
+                return
             state['link'] = text
             state['step'] = 2
             user_states[chat_id] = state
             send_message(chat_id, "2️⃣ Напишите ваше имя:")
         elif step == 2:
+            if already_responded(chat_id, 'step2'):
+                return
             state['name'] = text
             state['step'] = 3
             user_states[chat_id] = state
             send_message(chat_id, "3️⃣ Укажите адрес доставки:")
         elif step == 3:
+            if already_responded(chat_id, 'step3'):
+                return
             state['address'] = text
             state['step'] = 4
             user_states[chat_id] = state
             send_message(chat_id, "4️⃣ Укажите номер телефона:")
         elif step == 4:
+            if already_responded(chat_id, 'step4'):
+                return
             state['phone'] = text
             num = get_num()
             order = {
@@ -205,7 +221,6 @@ def process_update(update):
             save_order(num, order)
             send_message(chat_id, f"✅ **Заказ №{num} принят!**\n\nСпасибо, администратор свяжется с вами.")
             
-            # Отправка админу
             admin_text = f"""🛒 **НОВЫЙ ЗАКАЗ №{num}**
 
 👤 Клиент: {msg['chat'].get('first_name', '')}
@@ -218,7 +233,6 @@ def process_update(update):
             requests.post(f"{API_URL}/sendMessage", json={"chat_id": ADMIN_ID, "text": admin_text})
             user_states.pop(chat_id, None)
 
-    # Обработка нажатий на кнопки
     elif 'callback_query' in update:
         cb = update['callback_query']
         chat_id = cb['message']['chat']['id']
