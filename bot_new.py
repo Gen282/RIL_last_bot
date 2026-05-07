@@ -6,7 +6,7 @@ from datetime import datetime
 from flask import Flask
 from threading import Thread
 
-BOT_TOKEN = "8646996759:AAH1D-xXzOekPUs2G1hr-90jcxjX_D5BYwg"
+BOT_TOKEN = "8784207665:AAFWCkHSD1p2qKEJj76sknIUOPKYw8sXo3E"
 ADMIN_ID = 8296841503
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
