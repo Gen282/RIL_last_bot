@@ -7,7 +7,7 @@ from flask import Flask
 from threading import Thread
 
 # ========== ТОКЕН ВСТАВЬ СВОЙ ==========
-BOT_TOKEN = "8784207665:AAFWCkHSD1p2qKEJj76sknIUOPKYw8sXo3E"
+BOT_TOKEN = "8646996759:AAH1D-xXzOekPUs2G1hr-90jcxjX_D5BYwg"
 ADMIN_ID = 8296841503
 # ======================================
 
@@ -15,7 +15,6 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 last_update_id = 0
 counter_file = "counter.txt"
 orders_file = "orders.json"
-offset_file = "last_update_id.txt"
 
 app = Flask('')
 
@@ -84,36 +83,20 @@ def send_message(chat_id, text, keyboard=None):
         data["reply_markup"] = keyboard
     requests.post(f"{API_URL}/sendMessage", json=data)
 
-def get_last_update_id():
-    if os.path.exists(offset_file):
-        try:
-            with open(offset_file, 'r') as f:
-                return int(f.read().strip())
-        except:
-            return 0
-    return 0
-
-def save_last_update_id(update_id):
-    with open(offset_file, 'w') as f:
-        f.write(str(update_id))
-
 user_states = {}
 
 def process_update(update):
     global last_update_id
-    
     update_id = update['update_id']
     if update_id <= last_update_id:
         return
     last_update_id = update_id
-    save_last_update_id(last_update_id)
 
     if 'message' in update:
         msg = update['message']
         chat_id = msg['chat']['id']
         text = msg.get('text', '')
 
-        # Админ-команды
         if chat_id == ADMIN_ID and text.startswith('/'):
             if text == '/list_orders':
                 send_message(chat_id, get_orders_list())
@@ -140,7 +123,6 @@ def process_update(update):
                 send_message(chat_id, "👋 Админ-панель: /list_orders, /delete_order N, /clear_orders")
                 return
 
-        # Клиенты
         if text == '/start':
             keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
             send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
@@ -197,8 +179,7 @@ def process_update(update):
 
 def main():
     global last_update_id
-    last_update_id = get_last_update_id()
-    print(f"🚀 Бот запущен. Последний обработанный update_id: {last_update_id}")
+    print("🚀 Бот запущен!")
     while True:
         try:
             response = requests.get(f"{API_URL}/getUpdates", params={"offset": last_update_id + 1, "timeout": 30})
