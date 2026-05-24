@@ -9,7 +9,7 @@ from threading import Thread
 # ========== БЕЗОПАСНО: токен берётся из переменной окружения ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise Exception("❌ Ошибка: переменная окружения BOT_TOKEN не установлена!")
+raise Exception("❌ Ошибка: переменная окружения BOT_TOKEN не установлена!")
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8296841503"))  # тоже лучше вынести
 
