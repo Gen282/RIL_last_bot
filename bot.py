@@ -101,7 +101,7 @@ def send_order_to_admin(order_data):
 🛒 **НОВЫЙ ЗАКАЗ №{order_data['id']}**
 
 👤 **Клиент:** {order_data['name']}
-🆔 **Telegram:** @{order_data['username']} (ID: {order_data['user_id']})
+🆔 **Telegram ID:** {order_data['user_id']}
 📱 **Телефон:** {order_data['phone']}
 🏠 **Адрес:** {order_data['address']}
 
@@ -115,7 +115,7 @@ def send_order_to_admin(order_data):
         "inline_keyboard": [
             [{"text": "✅ Принять", "callback_data": f"accept_{order_data['id']}"}],
             [{"text": "❌ Отклонить", "callback_data": f"reject_{order_data['id']}"}],
-            [{"text": "📞 Связаться", "callback_data": f"contact_{order_data['id']}"}]
+            [{"text": "📞 Связаться с клиентом", "callback_data": f"contact_{order_data['id']}"}]
         ]
     }
     
@@ -156,18 +156,73 @@ def get_order_details(oid):
         if item.get('characteristics'):
             items_text += f"\n   Характеристики: {item['characteristics']}"
     
+    user_id = order.get('user_id', '')
+    username = order.get('username', '')
+    
+    # Создаём ссылку для связи
+    if username:
+        contact_link = f"https://t.me/{username}"
+    else:
+        contact_link = f"tg://user?id={user_id}"
+    
     text = f"""
 📦 **ЗАКАЗ №{oid}**
 
 👤 **Клиент:** {order.get('name', '-')}
-🆔 **Telegram:** @{order.get('username', '-')} (ID: {order.get('user_id', '-')})
-📱 **Телефон:** {order.get('phone', '-')}
+🆔 **Telegram ID:** {user_id}
+📱 **Телефон:** +{order.get('phone', '-')}
 🏠 **Адрес:** {order.get('address', '-')}
 
 📦 **Товары:**{items_text}
 
 📅 **Создан:** {order.get('created', '-')}
 📊 **Статус:** {order.get('status', 'Новый')}
+
+---
+📞 **Связаться с клиентом:**
+{contact_link}
+"""
+    return text
+
+def get_contact_info(oid):
+    orders = load_orders()
+    if str(oid) not in orders:
+        return f"❌ Заказ №{oid} не найден"
+    
+    order = orders[str(oid)]
+    user_id = order.get('user_id', '')
+    username = order.get('username', '')
+    phone = order.get('phone', '')
+    name = order.get('name', '')
+    
+    # Создаём ссылки для связи
+    if username:
+        tg_link = f"https://t.me/{username}"
+        tg_text = f"@{username}"
+    else:
+        tg_link = f"tg://user?id={user_id}"
+        tg_text = f"ID: {user_id} (нажмите на ссылку ниже)"
+    
+    text = f"""
+📞 **КОНТАКТЫ КЛИЕНТА**
+
+👤 **Имя:** {name}
+🆔 **Telegram:** {tg_text}
+📱 **Телефон:** +{phone}
+
+---
+🔗 **Ссылки для связи:**
+
+• Telegram: {tg_link}
+• Телефон: +{phone}
+
+💡 **Инструкция:**
+1. Нажмите на ссылку Telegram выше
+2. Откроется чат с клиентом
+3. Напишите ему сообщение
+
+⚠️ Если ссылка не открывается, скопируйте ID: {user_id}
+и используйте бота @userinfobot для поиска
 """
     return text
 
@@ -177,6 +232,7 @@ def admin_panel(chat_id):
             [{"text": "📋 Список заказов", "callback_data": "admin_list"}],
             [{"text": "🔍 Посмотреть заказ", "callback_data": "admin_view"}],
             [{"text": "📊 Изменить статус", "callback_data": "admin_status"}],
+            [{"text": "📞 Контакты клиента", "callback_data": "admin_contact"}],
             [{"text": "🗑️ Удалить заказ", "callback_data": "admin_delete"}],
             [{"text": "🧹 Очистить все заказы", "callback_data": "admin_clear"}]
         ]
@@ -197,7 +253,6 @@ def process_update(update):
         cb = update['callback_query']
         chat_id = cb['message']['chat']['id']
         data = cb['data']
-        message_id = cb['message']['message_id']
         
         print(f"🔘 Кнопка от {chat_id}: {data}")
 
@@ -220,6 +275,18 @@ def process_update(update):
                 }
                 send_message(chat_id, "✏️ Введите номер заказа для просмотра:", keyboard)
                 user_states[chat_id] = {'admin_action': 'view'}
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Кнопка "Контакты клиента"
+            elif data == 'admin_contact':
+                keyboard = {
+                    "inline_keyboard": [
+                        [{"text": "🔙 Назад", "callback_data": "admin_back"}]
+                    ]
+                }
+                send_message(chat_id, "✏️ Введите номер заказа для получения контактов:", keyboard)
+                user_states[chat_id] = {'admin_action': 'contact'}
                 requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                 return
             
@@ -278,7 +345,6 @@ def process_update(update):
                 }
                 status = status_map.get(data.split('_')[1], 'Новый')
                 
-                # Сохраняем выбранный статус в состояние
                 state = user_states.get(chat_id, {})
                 state['admin_action'] = 'status'
                 state['status_value'] = status
@@ -305,25 +371,10 @@ def process_update(update):
                 requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                 return
             
-            # Кнопка "Связаться"
+            # Кнопка "Связаться" из уведомления
             elif data.startswith('contact_'):
                 oid = data.split('_')[1]
-                orders = load_orders()
-                if str(oid) in orders:
-                    order = orders[str(oid)]
-                    text = f"""
-📞 **Контакты заказчика №{oid}**
-
-👤 Имя: {order.get('name', '-')}
-🆔 Telegram: @{order.get('username', '-')} (ID: {order.get('user_id', '-')})
-📱 Телефон: +{order.get('phone', '-')}
-🏠 Адрес: {order.get('address', '-')}
-
-💡 Напишите ему: https://t.me/{order.get('username', '')}
-"""
-                    send_message(chat_id, text)
-                else:
-                    send_message(chat_id, f"❌ Заказ №{oid} не найден")
+                send_message(chat_id, get_contact_info(oid))
                 requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                 return
 
@@ -361,7 +412,6 @@ def process_update(update):
             
             order_data = state.get('data', {})
             
-            # Проверяем, есть ли данные
             if not order_data.get('name'):
                 send_message(chat_id, "❌ Ошибка: не заполнены данные. Начните заново.")
                 user_states.pop(chat_id, None)
@@ -374,7 +424,6 @@ def process_update(update):
                 requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                 return
             
-            # Создаём заказ
             num = get_num()
             order = {
                 'id': num,
@@ -427,7 +476,6 @@ def process_update(update):
         if text == '/start':
             print("🆕 Команда /start получена!")
             
-            # Проверяем, админ ли это
             if chat_id == ADMIN_ID:
                 print("👑 Это админ! Показываю админ-панель")
                 admin_panel(chat_id)
@@ -555,12 +603,10 @@ def process_update(update):
 Что делаем дальше?
 """, keyboard)
         else:
-            # Если состояние не определено, но бот получил сообщение
             if text and text != '/start':
                 send_message(chat_id, "❌ Неизвестная команда. Напишите /start чтобы начать.")
         
         # ===== ОБРАБОТКА ТЕКСТОВЫХ ВВОДОВ АДМИНА =====
-        # Проверяем, есть ли у админа активное действие
         if chat_id == ADMIN_ID:
             state = user_states.get(chat_id, {})
             admin_action = state.get('admin_action')
@@ -569,6 +615,16 @@ def process_update(update):
                 try:
                     oid = int(text.strip())
                     send_message(chat_id, get_order_details(oid))
+                    user_states.pop(chat_id, None)
+                    admin_panel(chat_id)
+                except:
+                    send_message(chat_id, "❌ Введите корректный номер заказа (только цифры)")
+                return
+            
+            elif admin_action == 'contact':
+                try:
+                    oid = int(text.strip())
+                    send_message(chat_id, get_contact_info(oid))
                     user_states.pop(chat_id, None)
                     admin_panel(chat_id)
                 except:
@@ -612,7 +668,6 @@ def main():
     global last_update_id
     print("🚀 Бот запущен!")
     
-    # Отправляем приветствие админу
     send_message(ADMIN_ID, "✅ Бот успешно запущен!")
     
     while True:
@@ -632,4 +687,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
