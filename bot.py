@@ -505,8 +505,8 @@ def process_update(update):
 # ========== ОСНОВНОЙ ЦИКЛ ==========
 def main():
     global last_update_id
-    logger.info("🚀 Бот запущен!")
-    send_message(ADMIN_ID, "✅ Бот успешно запущен!")
+    logger.info("Бот запущен!")
+    send_message(ADMIN_ID, "Бот успешно запущен!")
     
     while True:
         try:
