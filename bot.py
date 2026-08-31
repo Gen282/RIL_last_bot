@@ -192,148 +192,12 @@ def process_update(update):
 
     print(f"📩 Получено обновление: {update_id}")
 
-    if 'message' in update:
-        msg = update['message']
-        chat_id = msg['chat']['id']
-        text = msg.get('text', '')
-        
-        print(f"💬 Сообщение от {chat_id}: {text}")
-        print(f"🔍 ADMIN_ID: {ADMIN_ID}, chat_id: {chat_id}")
-
-        # ===== ОБРАБОТКА /start ДЛЯ ВСЕХ =====
-        if text == '/start':
-            print("🆕 Команда /start получена!")
-            
-            # Проверяем, админ ли это
-            if chat_id == ADMIN_ID:
-                print("👑 Это админ! Показываю админ-панель")
-                admin_panel(chat_id)
-                user_states.pop(chat_id, None)
-                return
-            else:
-                print("👤 Это пользователь! Показываю приветствие")
-                keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
-                send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
-                user_states.pop(chat_id, None)
-                return
-
-        # ===== АДМИН-КОМАНДЫ (кроме /start) =====
-        if chat_id == ADMIN_ID and text.startswith('/'):
-            print("👑 Админ-команда:", text)
-            
-            if text == '/list_orders':
-                send_message(chat_id, get_orders_list())
-                return
-            elif text.startswith('/delete_order'):
-                parts = text.split()
-                if len(parts) != 2:
-                    send_message(chat_id, "❌ Использование: /delete_order НОМЕР")
-                    return
-                try:
-                    oid = int(parts[1])
-                    if delete_order(oid):
-                        send_message(chat_id, f"✅ Заказ №{oid} удалён.")
-                    else:
-                        send_message(chat_id, f"❌ Заказ №{oid} не найден.")
-                except:
-                    send_message(chat_id, "❌ Номер должен быть числом.")
-                return
-            elif text == '/clear_orders':
-                clear_all_orders()
-                send_message(chat_id, "🗑️ Все заказы удалены!")
-                return
-            elif text.startswith('/status'):
-                parts = text.split()
-                if len(parts) < 3:
-                    send_message(chat_id, "❌ Использование: /status НОМЕР СТАТУС")
-                    return
-                try:
-                    oid = int(parts[1])
-                    status = ' '.join(parts[2:])
-                    orders = load_orders()
-                    if str(oid) in orders:
-                        orders[str(oid)]['status'] = status
-                        with open("orders.json", 'w', encoding='utf-8') as f:
-                            json.dump(orders, f, ensure_ascii=False, indent=2)
-                        send_message(chat_id, f"✅ Статус заказа №{oid} изменён на: {status}")
-                        user_id = orders[str(oid)]['user_id']
-                        send_message(user_id, f"📢 Статус вашего заказа №{oid} изменён на: *{status}*")
-                    else:
-                        send_message(chat_id, f"❌ Заказ №{oid} не найден")
-                except:
-                    send_message(chat_id, "❌ Номер должен быть числом.")
-                return
-            return
-
-        # ===== ПРОЦЕСС ЗАКАЗА =====
-        state = user_states.get(chat_id, {})
-        step = state.get('step', 0)
-        
-        print(f"📋 Шаг: {step}, состояние: {state}")
-
-        if step == 1:
-            state['name'] = text
-            state['step'] = 2
-            user_states[chat_id] = state
-            send_message(chat_id, "📱 Отправьте ваш номер телефона (только цифры):")
-        elif step == 2:
-            phone = ''.join(filter(str.isdigit, text))
-            if len(phone) < 10:
-                send_message(chat_id, "❌ Введите корректный номер телефона (минимум 10 цифр):")
-                return
-            state['phone'] = phone
-            state['step'] = 3
-            user_states[chat_id] = state
-            send_message(chat_id, "🏠 Введите ваш адрес (город, улица, дом, квартира):")
-        elif step == 3:
-            state['address'] = text
-            state['step'] = 4
-            user_states[chat_id] = state
-            send_message(chat_id, "🔗 Отправьте ссылку на товар:")
-        elif step == 4:
-            if not text.startswith(('http://', 'https://')):
-                send_message(chat_id, "❌ Это не похоже на ссылку. Отправьте корректную ссылку:")
-                return
-            if 'items' not in state:
-                state['items'] = []
-            state['items'].append({'link': text, 'characteristics': ''})
-            state['step'] = 5
-            user_states[chat_id] = state
-            send_message(chat_id, "📝 Опишите характеристики товара (размер, цвет, количество и т.д.):")
-        elif step == 5:
-            if len(state['items']) > 0:
-                state['items'][-1]['characteristics'] = text
-            
-            items_preview = ""
-            for i, item in enumerate(state['items'], 1):
-                items_preview += f"\n{i}. {item['link']}"
-                if item.get('characteristics'):
-                    items_preview += f"\n   📌 {item['characteristics']}"
-            
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "➕ Добавить ещё товар", "callback_data": "add_item"}],
-                    [{"text": "✅ Завершить заказ", "callback_data": "finish_order"}]
-                ]
-            }
-            state['step'] = 6
-            user_states[chat_id] = state
-            send_message(chat_id, f"""
-✅ Товар добавлен!
-
-📦 **Ваши товары:**{items_preview}
-
-Что делаем дальше?
-""", keyboard)
-        else:
-            # Если состояние не определено, но бот получил сообщение
-            if text and text != '/start':
-                send_message(chat_id, "❌ Неизвестная команда. Напишите /start чтобы начать.")
-
-    elif 'callback_query' in update:
+    # ===== ОБРАБОТКА CALLBACK_QUERY (КНОПКИ) =====
+    if 'callback_query' in update:
         cb = update['callback_query']
         chat_id = cb['message']['chat']['id']
         data = cb['data']
+        message_id = cb['message']['message_id']
         
         print(f"🔘 Кнопка от {chat_id}: {data}")
 
@@ -465,9 +329,10 @@ def process_update(update):
 
         # ===== ПОЛЬЗОВАТЕЛЬСКИЕ КНОПКИ =====
         if data == 'new':
-            user_states[chat_id] = {'step': 1}
+            user_states[chat_id] = {'step': 1, 'data': {}}
             send_message(chat_id, "👤 Введите ваше имя:")
             requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+            return
         
         elif data == 'add_item':
             state = user_states.get(chat_id, {})
@@ -475,32 +340,62 @@ def process_update(update):
                 state['step'] = 4
                 user_states[chat_id] = state
                 send_message(chat_id, "🔗 Отправьте ссылку на следующий товар:")
+            else:
+                send_message(chat_id, "❌ Сначала добавьте товар")
             requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+            return
         
         elif data == 'finish_order':
+            print("🔴 Нажата кнопка Завершить заказ!")
             state = user_states.get(chat_id)
-            if state and state.get('step') == 6:
-                num = get_num()
-                order = {
-                    'id': num,
-                    'user_id': chat_id,
-                    'username': msg['chat'].get('username', ''),
-                    'name': state.get('name', ''),
-                    'phone': state.get('phone', ''),
-                    'address': state.get('address', ''),
-                    'items': state.get('items', []),
-                    'status': 'Новый',
-                    'created': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-                save_order(num, order)
-                
-                items_summary = ""
-                for i, item in enumerate(order['items'], 1):
-                    items_summary += f"\n{i}. {item['link']}"
-                    if item.get('characteristics'):
-                        items_summary += f"\n   📌 {item['characteristics']}"
-                
-                send_message(chat_id, f"""
+            
+            if not state:
+                send_message(chat_id, "❌ У вас нет активного заказа. Напишите /start")
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            if state.get('step') != 6:
+                send_message(chat_id, "❌ Сначала добавьте товар")
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            order_data = state.get('data', {})
+            
+            # Проверяем, есть ли данные
+            if not order_data.get('name'):
+                send_message(chat_id, "❌ Ошибка: не заполнены данные. Начните заново.")
+                user_states.pop(chat_id, None)
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            if not order_data.get('items'):
+                send_message(chat_id, "❌ Нет добавленных товаров. Начните заново.")
+                user_states.pop(chat_id, None)
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Создаём заказ
+            num = get_num()
+            order = {
+                'id': num,
+                'user_id': chat_id,
+                'username': cb['message']['chat'].get('username', ''),
+                'name': order_data.get('name', ''),
+                'phone': order_data.get('phone', ''),
+                'address': order_data.get('address', ''),
+                'items': order_data.get('items', []),
+                'status': 'Новый',
+                'created': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            save_order(num, order)
+            
+            items_summary = ""
+            for i, item in enumerate(order['items'], 1):
+                items_summary += f"\n{i}. {item['link']}"
+                if item.get('characteristics'):
+                    items_summary += f"\n   📌 {item['characteristics']}"
+            
+            send_message(chat_id, f"""
 ✅ **Заказ №{num} оформлен!**
 
 📦 **Ваши товары:**{items_summary}
@@ -513,21 +408,158 @@ def process_update(update):
 Спасибо! Администратор свяжется с вами.
 Номер заказа: **{num}**
 """)
-                
-                send_order_to_admin(order)
-                user_states.pop(chat_id, None)
             
+            send_order_to_admin(order)
+            user_states.pop(chat_id, None)
             requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
-        
-        # ===== ОБРАБОТКА ВВОДА ДЛЯ АДМИНА =====
-        # Это обрабатывается в секции 'message', но если админ вводит текст после выбора действия
-    
-    # ===== ОБРАБОТКА ТЕКСТОВЫХ ВВОДОВ АДМИНА =====
+            return
+
+    # ===== ОБРАБОТКА СООБЩЕНИЙ =====
     if 'message' in update:
         msg = update['message']
         chat_id = msg['chat']['id']
         text = msg.get('text', '')
         
+        print(f"💬 Сообщение от {chat_id}: {text}")
+        print(f"🔍 ADMIN_ID: {ADMIN_ID}, chat_id: {chat_id}")
+
+        # ===== ОБРАБОТКА /start ДЛЯ ВСЕХ =====
+        if text == '/start':
+            print("🆕 Команда /start получена!")
+            
+            # Проверяем, админ ли это
+            if chat_id == ADMIN_ID:
+                print("👑 Это админ! Показываю админ-панель")
+                admin_panel(chat_id)
+                user_states.pop(chat_id, None)
+                return
+            else:
+                print("👤 Это пользователь! Показываю приветствие")
+                keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
+                send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
+                user_states.pop(chat_id, None)
+                return
+
+        # ===== АДМИН-КОМАНДЫ (кроме /start) =====
+        if chat_id == ADMIN_ID and text.startswith('/'):
+            print("👑 Админ-команда:", text)
+            
+            if text == '/list_orders':
+                send_message(chat_id, get_orders_list())
+                return
+            elif text.startswith('/delete_order'):
+                parts = text.split()
+                if len(parts) != 2:
+                    send_message(chat_id, "❌ Использование: /delete_order НОМЕР")
+                    return
+                try:
+                    oid = int(parts[1])
+                    if delete_order(oid):
+                        send_message(chat_id, f"✅ Заказ №{oid} удалён.")
+                    else:
+                        send_message(chat_id, f"❌ Заказ №{oid} не найден.")
+                except:
+                    send_message(chat_id, "❌ Номер должен быть числом.")
+                return
+            elif text == '/clear_orders':
+                clear_all_orders()
+                send_message(chat_id, "🗑️ Все заказы удалены!")
+                return
+            elif text.startswith('/status'):
+                parts = text.split()
+                if len(parts) < 3:
+                    send_message(chat_id, "❌ Использование: /status НОМЕР СТАТУС")
+                    return
+                try:
+                    oid = int(parts[1])
+                    status = ' '.join(parts[2:])
+                    orders = load_orders()
+                    if str(oid) in orders:
+                        orders[str(oid)]['status'] = status
+                        with open("orders.json", 'w', encoding='utf-8') as f:
+                            json.dump(orders, f, ensure_ascii=False, indent=2)
+                        send_message(chat_id, f"✅ Статус заказа №{oid} изменён на: {status}")
+                        user_id = orders[str(oid)]['user_id']
+                        send_message(user_id, f"📢 Статус вашего заказа №{oid} изменён на: *{status}*")
+                    else:
+                        send_message(chat_id, f"❌ Заказ №{oid} не найден")
+                except:
+                    send_message(chat_id, "❌ Номер должен быть числом.")
+                return
+            return
+
+        # ===== ПРОЦЕСС ЗАКАЗА =====
+        state = user_states.get(chat_id, {})
+        step = state.get('step', 0)
+        order_data = state.get('data', {})
+        
+        print(f"📋 Шаг: {step}, состояние: {state}")
+
+        if step == 1:
+            order_data['name'] = text
+            state['step'] = 2
+            state['data'] = order_data
+            user_states[chat_id] = state
+            send_message(chat_id, "📱 Отправьте ваш номер телефона (только цифры):")
+        elif step == 2:
+            phone = ''.join(filter(str.isdigit, text))
+            if len(phone) < 10:
+                send_message(chat_id, "❌ Введите корректный номер телефона (минимум 10 цифр):")
+                return
+            order_data['phone'] = phone
+            state['step'] = 3
+            state['data'] = order_data
+            user_states[chat_id] = state
+            send_message(chat_id, "🏠 Введите ваш адрес (город, улица, дом, квартира):")
+        elif step == 3:
+            order_data['address'] = text
+            state['step'] = 4
+            state['data'] = order_data
+            user_states[chat_id] = state
+            send_message(chat_id, "🔗 Отправьте ссылку на товар:")
+        elif step == 4:
+            if not text.startswith(('http://', 'https://')):
+                send_message(chat_id, "❌ Это не похоже на ссылку. Отправьте корректную ссылку:")
+                return
+            if 'items' not in order_data:
+                order_data['items'] = []
+            order_data['items'].append({'link': text, 'characteristics': ''})
+            state['step'] = 5
+            state['data'] = order_data
+            user_states[chat_id] = state
+            send_message(chat_id, "📝 Опишите характеристики товара (размер, цвет, количество и т.д.):")
+        elif step == 5:
+            if len(order_data['items']) > 0:
+                order_data['items'][-1]['characteristics'] = text
+            
+            items_preview = ""
+            for i, item in enumerate(order_data['items'], 1):
+                items_preview += f"\n{i}. {item['link']}"
+                if item.get('characteristics'):
+                    items_preview += f"\n   📌 {item['characteristics']}"
+            
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "➕ Добавить ещё товар", "callback_data": "add_item"}],
+                    [{"text": "✅ Завершить заказ", "callback_data": "finish_order"}]
+                ]
+            }
+            state['step'] = 6
+            state['data'] = order_data
+            user_states[chat_id] = state
+            send_message(chat_id, f"""
+✅ Товар добавлен!
+
+📦 **Ваши товары:**{items_preview}
+
+Что делаем дальше?
+""", keyboard)
+        else:
+            # Если состояние не определено, но бот получил сообщение
+            if text and text != '/start':
+                send_message(chat_id, "❌ Неизвестная команда. Напишите /start чтобы начать.")
+        
+        # ===== ОБРАБОТКА ТЕКСТОВЫХ ВВОДОВ АДМИНА =====
         # Проверяем, есть ли у админа активное действие
         if chat_id == ADMIN_ID:
             state = user_states.get(chat_id, {})
