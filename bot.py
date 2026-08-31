@@ -6,16 +6,23 @@ from datetime import datetime
 from flask import Flask
 from threading import Thread
 
+print("1. Бот начинает загрузку...")
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
+    print("❌ ОШИБКА: BOT_TOKEN не установлен!")
     raise Exception("Ошибка: переменная окружения BOT_TOKEN не установлена!")
 
+print(f"2. Токен загружен: {BOT_TOKEN[:10]}...")
+
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8296841503"))
+print(f"3. ADMIN_ID: {ADMIN_ID}")
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 last_update_id = 0
 user_states = {}
 
+print("4. Создаю Flask приложение...")
 app = Flask('')
 
 @app.route('/')
@@ -27,9 +34,11 @@ def ping():
     return "ok"
 
 def run_flask():
+    print("5. Запускаю Flask сервер...")
     app.run(host='0.0.0.0', port=8080)
 
 Thread(target=run_flask).start()
+print("6. Flask сервер запущен в фоне")
 
 def get_num():
     counter_file = "counter.txt"
@@ -74,9 +83,12 @@ def send_message(chat_id, text, keyboard=None):
     if keyboard:
         data["reply_markup"] = keyboard
     try:
-        requests.post(f"{API_URL}/sendMessage", json=data)
+        response = requests.post(f"{API_URL}/sendMessage", json=data)
+        print(f"📤 Отправлено сообщение в {chat_id}")
+        return response
     except Exception as e:
-        print(f"Send error: {e}")
+        print(f"❌ Ошибка отправки: {e}")
+        return None
 
 def send_order_to_admin(order_data):
     items_text = ""
@@ -132,13 +144,32 @@ def process_update(update):
         return
     last_update_id = update_id
 
+    print(f"📩 Получено обновление: {update_id}")
+
     if 'message' in update:
         msg = update['message']
         chat_id = msg['chat']['id']
         text = msg.get('text', '')
+        
+        print(f"💬 Сообщение от {chat_id}: {text}")
+        print(f"🔍 ADMIN_ID: {ADMIN_ID}, chat_id: {chat_id}")
 
+        # ===== СНАЧАЛА ПРОВЕРЯЕМ АДМИН-КОМАНДЫ =====
         if chat_id == ADMIN_ID and text.startswith('/'):
-            if text == '/list_orders':
+            print("👑 Это админ!")
+            
+            if text == '/start':
+                send_message(chat_id, """👋 **Админ-панель**
+
+Доступные команды:
+/list_orders - список заказов
+/delete_order N - удалить заказ
+/clear_orders - удалить все заказы
+/status N СТАТУС - изменить статус
+/start - это сообщение
+""")
+                return
+            elif text == '/list_orders':
                 send_message(chat_id, get_orders_list())
                 return
             elif text.startswith('/delete_order'):
@@ -159,18 +190,42 @@ def process_update(update):
                 clear_all_orders()
                 send_message(chat_id, "🗑️ Все заказы удалены!")
                 return
-            elif text == '/start':
-                send_message(chat_id, "👋 Админ-панель: /list_orders, /delete_order N, /clear_orders")
+            elif text.startswith('/status'):
+                parts = text.split()
+                if len(parts) < 3:
+                    send_message(chat_id, "❌ Использование: /status НОМЕР СТАТУС")
+                    return
+                try:
+                    oid = int(parts[1])
+                    status = ' '.join(parts[2:])
+                    orders = load_orders()
+                    if str(oid) in orders:
+                        orders[str(oid)]['status'] = status
+                        with open("orders.json", 'w', encoding='utf-8') as f:
+                            json.dump(orders, f, ensure_ascii=False, indent=2)
+                        send_message(chat_id, f"✅ Статус заказа №{oid} изменён на: {status}")
+                        user_id = orders[str(oid)]['user_id']
+                        send_message(user_id, f"📢 Статус вашего заказа №{oid} изменён на: *{status}*")
+                    else:
+                        send_message(chat_id, f"❌ Заказ №{oid} не найден")
+                except:
+                    send_message(chat_id, "❌ Номер должен быть числом.")
                 return
+            return
 
+        # ===== ПОТОМ ПОЛЬЗОВАТЕЛЬСКИЙ /start =====
         if text == '/start':
+            print("🆕 Пользователь запустил бота!")
             keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
             send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
             user_states.pop(chat_id, None)
             return
 
+        # ===== ПРОЦЕСС ЗАКАЗА =====
         state = user_states.get(chat_id, {})
         step = state.get('step', 0)
+        
+        print(f"📋 Шаг: {step}, состояние: {state}")
 
         if step == 1:
             state['name'] = text
@@ -226,12 +281,19 @@ def process_update(update):
 
 Что делаем дальше?
 """, keyboard)
+        else:
+            # Если состояние не определено, но бот получил сообщение
+            if text and text != '/start':
+                send_message(chat_id, "❌ Неизвестная команда. Напишите /start чтобы начать.")
 
     elif 'callback_query' in update:
         cb = update['callback_query']
         chat_id = cb['message']['chat']['id']
         data = cb['data']
+        
+        print(f"🔘 Кнопка от {chat_id}: {data}")
 
+        # ===== АДМИН-КНОПКИ =====
         if chat_id == ADMIN_ID:
             if data.startswith('accept_') or data.startswith('reject_'):
                 oid = data.split('_')[1]
@@ -270,6 +332,7 @@ def process_update(update):
                 requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                 return
 
+        # ===== ПОЛЬЗОВАТЕЛЬСКИЕ КНОПКИ =====
         if data == 'new':
             user_states[chat_id] = {'step': 1}
             send_message(chat_id, "👤 Введите ваше имя:")
@@ -328,14 +391,23 @@ def process_update(update):
 def main():
     global last_update_id
     print("🚀 Бот запущен!")
+    
+    # Отправляем приветствие админу
+    send_message(ADMIN_ID, "✅ Бот успешно запущен!")
+    
     while True:
         try:
             response = requests.get(f"{API_URL}/getUpdates", params={"offset": last_update_id + 1, "timeout": 30})
-            updates = response.json().get('result', [])
-            for update in updates:
-                process_update(update)
+            if response.status_code == 200:
+                updates = response.json().get('result', [])
+                if updates:
+                    print(f"📨 Получено {len(updates)} обновлений")
+                for update in updates:
+                    process_update(update)
+            else:
+                print(f"❌ Ошибка API: {response.status_code}")
         except Exception as e:
-            print(f"Ошибка: {e}")
+            print(f"❌ Ошибка: {e}")
         time.sleep(1)
 
 if __name__ == "__main__":
