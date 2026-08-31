@@ -5,9 +5,6 @@ import time
 from datetime import datetime
 from flask import Flask
 from threading import Thread
-from dotenv import load_dotenv
-
-load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -76,7 +73,10 @@ def send_message(chat_id, text, keyboard=None):
     data = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     if keyboard:
         data["reply_markup"] = keyboard
-    requests.post(f"{API_URL}/sendMessage", json=data)
+    try:
+        requests.post(f"{API_URL}/sendMessage", json=data)
+    except Exception as e:
+        print(f"Send error: {e}")
 
 def send_order_to_admin(order_data):
     items_text = ""
@@ -340,4 +340,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
