@@ -129,13 +129,59 @@ def get_orders_list():
     sorted_orders = sorted(orders.items(), key=lambda x: int(x[0]), reverse=True)
     recent = sorted_orders[:10]
     
-    result = "📋 **Последние заказы:**\n\n"
+    result = "📋 **Список заказов:**\n\n"
     for oid, order in recent:
-        result += f"🔹 **Заказ №{oid}**\n"
-        result += f"   👤 Клиент: {order.get('name', '-')}\n"
-        result += f"   📅 Создан: {order.get('created', '-')[:16]}\n"
-        result += f"   📞 Телефон: {order.get('phone', '-')}\n\n"
+        status_emoji = {
+            'Новый': '🆕',
+            'Принят': '✅',
+            'Отклонён': '❌',
+            'В обработке': '🔄',
+            'Доставлен': '📦'
+        }.get(order.get('status', 'Новый'), '📌')
+        
+        result += f"{status_emoji} **Заказ №{oid}** | {order.get('status', 'Новый')}\n"
+        result += f"   👤 {order.get('name', '-')}\n"
+        result += f"   📅 {order.get('created', '-')[:16]}\n\n"
     return result
+
+def get_order_details(oid):
+    orders = load_orders()
+    if str(oid) not in orders:
+        return f"❌ Заказ №{oid} не найден"
+    
+    order = orders[str(oid)]
+    items_text = ""
+    for i, item in enumerate(order.get('items', []), 1):
+        items_text += f"\n{i}. Ссылка: {item['link']}"
+        if item.get('characteristics'):
+            items_text += f"\n   Характеристики: {item['characteristics']}"
+    
+    text = f"""
+📦 **ЗАКАЗ №{oid}**
+
+👤 **Клиент:** {order.get('name', '-')}
+🆔 **Telegram:** @{order.get('username', '-')} (ID: {order.get('user_id', '-')})
+📱 **Телефон:** {order.get('phone', '-')}
+🏠 **Адрес:** {order.get('address', '-')}
+
+📦 **Товары:**{items_text}
+
+📅 **Создан:** {order.get('created', '-')}
+📊 **Статус:** {order.get('status', 'Новый')}
+"""
+    return text
+
+def admin_panel(chat_id):
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "📋 Список заказов", "callback_data": "admin_list"}],
+            [{"text": "🔍 Посмотреть заказ", "callback_data": "admin_view"}],
+            [{"text": "📊 Изменить статус", "callback_data": "admin_status"}],
+            [{"text": "🗑️ Удалить заказ", "callback_data": "admin_delete"}],
+            [{"text": "🧹 Очистить все заказы", "callback_data": "admin_clear"}]
+        ]
+    }
+    send_message(chat_id, "👋 **Админ-панель**\n\nВыберите действие:", keyboard)
 
 def process_update(update):
     global last_update_id
@@ -161,15 +207,7 @@ def process_update(update):
             # Проверяем, админ ли это
             if chat_id == ADMIN_ID:
                 print("👑 Это админ! Показываю админ-панель")
-                send_message(chat_id, """👋 **Админ-панель**
-
-Доступные команды:
-/list_orders - список заказов
-/delete_order N - удалить заказ
-/clear_orders - удалить все заказы
-/status N СТАТУС - изменить статус
-/start - это сообщение
-""")
+                admin_panel(chat_id)
                 user_states.pop(chat_id, None)
                 return
             else:
@@ -299,8 +337,94 @@ def process_update(update):
         
         print(f"🔘 Кнопка от {chat_id}: {data}")
 
-        # ===== АДМИН-КНОПКИ =====
+        # ===== АДМИН-ПАНЕЛЬ =====
         if chat_id == ADMIN_ID:
+            
+            # Кнопка "Список заказов"
+            if data == 'admin_list':
+                send_message(chat_id, get_orders_list())
+                admin_panel(chat_id)
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Кнопка "Посмотреть заказ"
+            elif data == 'admin_view':
+                keyboard = {
+                    "inline_keyboard": [
+                        [{"text": "🔙 Назад", "callback_data": "admin_back"}]
+                    ]
+                }
+                send_message(chat_id, "✏️ Введите номер заказа для просмотра:", keyboard)
+                user_states[chat_id] = {'admin_action': 'view'}
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Кнопка "Изменить статус"
+            elif data == 'admin_status':
+                keyboard = {
+                    "inline_keyboard": [
+                        [{"text": "🆕 Новый", "callback_data": "status_new"}],
+                        [{"text": "✅ Принят", "callback_data": "status_accepted"}],
+                        [{"text": "🔄 В обработке", "callback_data": "status_processing"}],
+                        [{"text": "📦 Доставлен", "callback_data": "status_delivered"}],
+                        [{"text": "❌ Отклонён", "callback_data": "status_rejected"}],
+                        [{"text": "🔙 Назад", "callback_data": "admin_back"}]
+                    ]
+                }
+                send_message(chat_id, "📊 Выберите статус для заказа:\n\nСначала введите номер заказа", keyboard)
+                user_states[chat_id] = {'admin_action': 'status'}
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Кнопка "Удалить заказ"
+            elif data == 'admin_delete':
+                keyboard = {
+                    "inline_keyboard": [
+                        [{"text": "🔙 Назад", "callback_data": "admin_back"}]
+                    ]
+                }
+                send_message(chat_id, "🗑️ Введите номер заказа для удаления:", keyboard)
+                user_states[chat_id] = {'admin_action': 'delete'}
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Кнопка "Очистить все заказы"
+            elif data == 'admin_clear':
+                clear_all_orders()
+                send_message(chat_id, "🗑️ Все заказы удалены!")
+                admin_panel(chat_id)
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Кнопка "Назад"
+            elif data == 'admin_back':
+                admin_panel(chat_id)
+                user_states.pop(chat_id, None)
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Выбор статуса
+            elif data.startswith('status_'):
+                status_map = {
+                    'new': 'Новый',
+                    'accepted': 'Принят',
+                    'processing': 'В обработке',
+                    'delivered': 'Доставлен',
+                    'rejected': 'Отклонён'
+                }
+                status = status_map.get(data.split('_')[1], 'Новый')
+                
+                # Сохраняем выбранный статус в состояние
+                state = user_states.get(chat_id, {})
+                state['admin_action'] = 'status'
+                state['status_value'] = status
+                user_states[chat_id] = state
+                
+                send_message(chat_id, f"✅ Выбран статус: {status}\n\n✏️ Введите номер заказа:")
+                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                return
+            
+            # Обработка кнопок принятия/отклонения заказа
             if data.startswith('accept_') or data.startswith('reject_'):
                 oid = data.split('_')[1]
                 status = "Принят" if data.startswith('accept_') else "Отклонён"
@@ -317,6 +441,7 @@ def process_update(update):
                 requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                 return
             
+            # Кнопка "Связаться"
             elif data.startswith('contact_'):
                 oid = data.split('_')[1]
                 orders = load_orders()
@@ -393,6 +518,63 @@ def process_update(update):
                 user_states.pop(chat_id, None)
             
             requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+        
+        # ===== ОБРАБОТКА ВВОДА ДЛЯ АДМИНА =====
+        # Это обрабатывается в секции 'message', но если админ вводит текст после выбора действия
+    
+    # ===== ОБРАБОТКА ТЕКСТОВЫХ ВВОДОВ АДМИНА =====
+    if 'message' in update:
+        msg = update['message']
+        chat_id = msg['chat']['id']
+        text = msg.get('text', '')
+        
+        # Проверяем, есть ли у админа активное действие
+        if chat_id == ADMIN_ID:
+            state = user_states.get(chat_id, {})
+            admin_action = state.get('admin_action')
+            
+            if admin_action == 'view':
+                try:
+                    oid = int(text.strip())
+                    send_message(chat_id, get_order_details(oid))
+                    user_states.pop(chat_id, None)
+                    admin_panel(chat_id)
+                except:
+                    send_message(chat_id, "❌ Введите корректный номер заказа (только цифры)")
+                return
+            
+            elif admin_action == 'delete':
+                try:
+                    oid = int(text.strip())
+                    if delete_order(oid):
+                        send_message(chat_id, f"✅ Заказ №{oid} удалён.")
+                    else:
+                        send_message(chat_id, f"❌ Заказ №{oid} не найден.")
+                    user_states.pop(chat_id, None)
+                    admin_panel(chat_id)
+                except:
+                    send_message(chat_id, "❌ Введите корректный номер заказа (только цифры)")
+                return
+            
+            elif admin_action == 'status':
+                try:
+                    oid = int(text.strip())
+                    orders = load_orders()
+                    if str(oid) in orders:
+                        status = state.get('status_value', 'Новый')
+                        orders[str(oid)]['status'] = status
+                        with open("orders.json", 'w', encoding='utf-8') as f:
+                            json.dump(orders, f, ensure_ascii=False, indent=2)
+                        user_id = orders[str(oid)]['user_id']
+                        send_message(user_id, f"📢 Статус вашего заказа №{oid} изменён на: *{status}*")
+                        send_message(chat_id, f"✅ Статус заказа №{oid} изменён на: {status}")
+                    else:
+                        send_message(chat_id, f"❌ Заказ №{oid} не найден")
+                    user_states.pop(chat_id, None)
+                    admin_panel(chat_id)
+                except:
+                    send_message(chat_id, "❌ Введите корректный номер заказа (только цифры)")
+                return
 
 def main():
     global last_update_id
@@ -418,3 +600,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
