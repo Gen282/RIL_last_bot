@@ -2,7 +2,6 @@ import requests
 import json
 import os
 import time
-import logging
 from datetime import datetime
 from flask import Flask
 from threading import Thread
@@ -10,502 +9,401 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise Exception("BOT_TOKEN not set")
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    print("ERROR: BOT_TOKEN not set")
+    exit(1)
 
-try:
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "8296841503"))
-except ValueError:
-    raise Exception("ADMIN_ID must be a number")
+ADMIN = int(os.getenv("ADMIN_ID", "8296841503"))
 
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+URL = f"https://api.telegram.org/bot{TOKEN}"
+LAST_ID = 0
+USERS = {}
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-app = Flask('')
+app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is working"
+    return "OK"
 
 @app.route('/ping')
 def ping():
-    return "ok"
+    return "pong"
 
-def run_flask():
+def run_server():
     app.run(host='0.0.0.0', port=8080)
 
-Thread(target=run_flask, daemon=True).start()
+Thread(target=run_server, daemon=True).start()
 
-last_update_id = 0
-user_states = {}
-
-def get_next_order_number():
-    counter_file = "counter.txt"
-    if os.path.exists(counter_file):
-        with open(counter_file, 'r') as f:
-            num = int(f.read().strip())
+def get_num():
+    fname = "counter.txt"
+    if os.path.exists(fname):
+        with open(fname, 'r') as f:
+            n = int(f.read())
     else:
-        num = 100
-    num += 1
-    with open(counter_file, 'w') as f:
-        f.write(str(num))
-    return num
+        n = 100
+    n += 1
+    with open(fname, 'w') as f:
+        f.write(str(n))
+    return n
 
 def load_orders():
-    orders_file = "orders.json"
-    if os.path.exists(orders_file):
-        with open(orders_file, 'r', encoding='utf-8') as f:
+    fname = "orders.json"
+    if os.path.exists(fname):
+        with open(fname, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
 
-def save_order(order_data):
-    orders_file = "orders.json"
+def save_order(data):
+    fname = "orders.json"
     orders = load_orders()
-    order_id = str(order_data['id'])
-    orders[order_id] = order_data
-    with open(orders_file, 'w', encoding='utf-8') as f:
+    orders[str(data['id'])] = data
+    with open(fname, 'w', encoding='utf-8') as f:
         json.dump(orders, f, ensure_ascii=False, indent=2)
-    return order_id
 
-def delete_order(order_id):
-    orders_file = "orders.json"
+def delete_order(oid):
+    fname = "orders.json"
     orders = load_orders()
-    if str(order_id) in orders:
-        del orders[str(order_id)]
-        with open(orders_file, 'w', encoding='utf-8') as f:
+    if str(oid) in orders:
+        del orders[str(oid)]
+        with open(fname, 'w', encoding='utf-8') as f:
             json.dump(orders, f, ensure_ascii=False, indent=2)
         return True
     return False
 
-def clear_all_orders():
-    orders_file = "orders.json"
-    with open(orders_file, 'w', encoding='utf-8') as f:
+def clear_orders():
+    fname = "orders.json"
+    with open(fname, 'w', encoding='utf-8') as f:
         json.dump({}, f, ensure_ascii=False, indent=2)
 
-def update_order_status(order_id, status):
-    orders_file = "orders.json"
-    orders = load_orders()
-    if str(order_id) in orders:
-        orders[str(order_id)]['status'] = status
-        with open(orders_file, 'w', encoding='utf-8') as f:
-            json.dump(orders, f, ensure_ascii=False, indent=2)
-        return True
-    return False
-
-def send_message(chat_id, text, keyboard=None):
-    data = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-    if keyboard:
-        data["reply_markup"] = keyboard
+def send(chat_id, text, kb=None):
+    data = {"chat_id": chat_id, "text": text}
+    if kb:
+        data["reply_markup"] = kb
     try:
-        response = requests.post(f"{API_URL}/sendMessage", json=data, timeout=10)
-        return response.json()
-    except Exception as e:
-        logger.error(f"Send error: {e}")
-        return None
+        requests.post(f"{URL}/sendMessage", json=data, timeout=10)
+    except:
+        pass
 
-def send_order_to_admin(order_data):
-    items_text = ""
-    for i, item in enumerate(order_data['items'], 1):
-        items_text += f"\n{i}. Link: {item['link']}"
-        if item.get('characteristics'):
-            items_text += f"\n   Characteristics: {item['characteristics']}"
+def send_admin(order):
+    items = ""
+    for i, item in enumerate(order['items'], 1):
+        items += f"\n{i}. {item['link']}"
+        if item.get('char'):
+            items += f"\n   {item['char']}"
     
-    text = f"""
-NEW ORDER #{order_data['id']}
-
-Client: {order_data['name']}
-Telegram: @{order_data['username']} (ID: {order_data['user_id']})
-Phone: {order_data['phone']}
-Address: {order_data['address']}
-
-Items:{items_text}
-
-Created: {order_data['created']}
-Status: {order_data['status']}
-"""
+    txt = f"NEW ORDER #{order['id']}\n\n"
+    txt += f"Name: {order['name']}\n"
+    txt += f"User: @{order['username']} (ID: {order['user_id']})\n"
+    txt += f"Phone: {order['phone']}\n"
+    txt += f"Address: {order['address']}\n"
+    txt += f"Items:{items}\n"
+    txt += f"Created: {order['created']}"
     
-    keyboard = {
+    kb = {
         "inline_keyboard": [
-            [{"text": "Accept", "callback_data": f"accept_{order_data['id']}"}],
-            [{"text": "Reject", "callback_data": f"reject_{order_data['id']}"}],
-            [{"text": "Contact", "callback_data": f"contact_{order_data['id']}"}]
+            [{"text": "Accept", "callback_data": f"acc_{order['id']}"}],
+            [{"text": "Reject", "callback_data": f"rej_{order['id']}"}],
+            [{"text": "Contact", "callback_data": f"con_{order['id']}"}]
         ]
     }
-    
-    send_message(ADMIN_ID, text, keyboard)
+    send(ADMIN, txt, kb)
 
-def format_orders_list(orders, limit=10):
+def list_orders(orders):
     if not orders:
-        return "Order list is empty."
-    
-    sorted_orders = sorted(orders.items(), key=lambda x: int(x[0]), reverse=True)
-    recent = sorted_orders[:limit]
-    
-    result = "Order List:\n\n"
-    for oid, order in recent:
-        items_count = len(order.get('items', []))
-        result += f"Order #{oid} | {order.get('status', 'New')}\n"
-        result += f"   {order.get('name', '-')} | @{order.get('username', '-')}\n"
-        result += f"   {items_count} item(s)\n"
-        result += f"   {order.get('created', '-')[:16]}\n\n"
-    return result
+        return "No orders"
+    txt = "Orders:\n\n"
+    for oid, o in list(orders.items())[-10:]:
+        txt += f"#{oid} | {o.get('status', 'New')}\n"
+        txt += f"  {o.get('name', '-')} | @{o.get('username', '-')}\n\n"
+    return txt
 
-def format_order_details(order_id, order):
-    items_text = ""
+def order_details(oid, order):
+    items = ""
     for i, item in enumerate(order.get('items', []), 1):
-        items_text += f"\n{i}. Link: {item['link']}"
-        if item.get('characteristics'):
-            items_text += f"\n   Characteristics: {item['characteristics']}"
+        items += f"\n{i}. {item['link']}"
+        if item.get('char'):
+            items += f"\n   {item['char']}"
     
-    text = f"""
-ORDER #{order_id}
+    txt = f"ORDER #{oid}\n\n"
+    txt += f"Name: {order.get('name', '-')}\n"
+    txt += f"User: @{order.get('username', '-')} (ID: {order.get('user_id', '-')})\n"
+    txt += f"Phone: {order.get('phone', '-')}\n"
+    txt += f"Address: {order.get('address', '-')}\n"
+    txt += f"Items:{items}\n"
+    txt += f"Status: {order.get('status', 'New')}\n"
+    txt += f"Created: {order.get('created', '-')}"
+    return txt
 
-Client: {order.get('name', '-')}
-Telegram: @{order.get('username', '-')} (ID: {order.get('user_id', '-')})
-Phone: {order.get('phone', '-')}
-Address: {order.get('address', '-')}
-
-Items:{items_text}
-
-Created: {order.get('created', '-')}
-Status: {order.get('status', 'New')}
-"""
-    return text
-
-def process_update(update):
-    global last_update_id
+def process(update):
+    global LAST_ID
     
-    update_id = update.get('update_id', 0)
-    if update_id <= last_update_id:
+    uid = update.get('update_id', 0)
+    if uid <= LAST_ID:
         return
-    last_update_id = update_id
+    LAST_ID = uid
     
     if 'message' in update:
         msg = update['message']
-        chat_id = msg['chat']['id']
+        chat = msg['chat']['id']
         text = msg.get('text', '')
         
         username = msg['chat'].get('username', '')
         if not username:
-            username = msg['chat'].get('first_name', '').replace(' ', '_')
+            username = msg['chat'].get('first_name', 'user')
         
-        if chat_id == ADMIN_ID and text.startswith('/'):
+        if chat == ADMIN and text.startswith('/'):
             if text == '/start':
-                send_message(chat_id, """
-Admin Panel:
-
-Commands:
-/list_orders - list all orders
-/view_order N - view order N
-/delete_order N - delete order N
-/clear_orders - delete all orders
-/status N STATUS - change order status
-/start - this message
-""")
+                send(chat, "Admin panel:\n/list - list orders\n/view N - view order\n/del N - delete order\n/clear - clear all\n/status N TEXT - change status")
                 return
             
-            elif text == '/list_orders':
-                orders = load_orders()
-                send_message(chat_id, format_orders_list(orders))
+            if text == '/list':
+                send(chat, list_orders(load_orders()))
                 return
             
-            elif text.startswith('/view_order'):
+            if text.startswith('/view'):
                 parts = text.split()
                 if len(parts) != 2:
-                    send_message(chat_id, "Usage: /view_order NUMBER")
+                    send(chat, "Use: /view NUMBER")
                     return
                 try:
-                    order_id = int(parts[1])
+                    oid = int(parts[1])
                     orders = load_orders()
-                    if str(order_id) in orders:
-                        send_message(chat_id, format_order_details(order_id, orders[str(order_id)]))
+                    if str(oid) in orders:
+                        send(chat, order_details(oid, orders[str(oid)]))
                     else:
-                        send_message(chat_id, f"Order #{order_id} not found")
-                except ValueError:
-                    send_message(chat_id, "Number must be integer")
+                        send(chat, f"Order #{oid} not found")
+                except:
+                    send(chat, "Invalid number")
                 return
             
-            elif text.startswith('/delete_order'):
+            if text.startswith('/del'):
                 parts = text.split()
                 if len(parts) != 2:
-                    send_message(chat_id, "Usage: /delete_order NUMBER")
+                    send(chat, "Use: /del NUMBER")
                     return
                 try:
-                    order_id = int(parts[1])
-                    if delete_order(order_id):
-                        send_message(chat_id, f"Order #{order_id} deleted")
+                    oid = int(parts[1])
+                    if delete_order(oid):
+                        send(chat, f"Order #{oid} deleted")
                     else:
-                        send_message(chat_id, f"Order #{order_id} not found")
-                except ValueError:
-                    send_message(chat_id, "Number must be integer")
+                        send(chat, f"Order #{oid} not found")
+                except:
+                    send(chat, "Invalid number")
                 return
             
-            elif text == '/clear_orders':
-                clear_all_orders()
-                send_message(chat_id, "All orders deleted!")
+            if text == '/clear':
+                clear_orders()
+                send(chat, "All orders cleared")
                 return
             
-            elif text.startswith('/status'):
+            if text.startswith('/status'):
                 parts = text.split()
                 if len(parts) < 3:
-                    send_message(chat_id, "Usage: /status NUMBER STATUS")
+                    send(chat, "Use: /status NUMBER STATUS")
                     return
                 try:
-                    order_id = int(parts[1])
+                    oid = int(parts[1])
                     status = ' '.join(parts[2:])
-                    if update_order_status(order_id, status):
-                        send_message(chat_id, f"Order #{order_id} status changed to: {status}")
-                        orders = load_orders()
-                        if str(order_id) in orders:
-                            user_id = orders[str(order_id)]['user_id']
-                            send_message(user_id, f"Your order #{order_id} status changed to: {status}")
+                    orders = load_orders()
+                    if str(oid) in orders:
+                        orders[str(oid)]['status'] = status
+                        with open("orders.json", 'w', encoding='utf-8') as f:
+                            json.dump(orders, f, ensure_ascii=False, indent=2)
+                        send(chat, f"Order #{oid} status: {status}")
+                        user_id = orders[str(oid)]['user_id']
+                        send(user_id, f"Your order #{oid} status: {status}")
                     else:
-                        send_message(chat_id, f"Order #{order_id} not found")
-                except ValueError:
-                    send_message(chat_id, "Number must be integer")
+                        send(chat, f"Order #{oid} not found")
+                except:
+                    send(chat, "Invalid number")
                 return
             
             return
         
         if text == '/start':
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "New Order", "callback_data": "new_order"}]
-                ]
-            }
-            send_message(chat_id, """
-Welcome!
-
-Press "New Order" to start.
-""", keyboard)
-            user_states.pop(chat_id, None)
+            kb = {"inline_keyboard": [[{"text": "New Order", "callback_data": "new"}]]}
+            send(chat, "Welcome! Press 'New Order' to start", kb)
+            USERS.pop(chat, None)
             return
         
-        state = user_states.get(chat_id)
+        state = USERS.get(chat)
         if not state:
             return
         
         step = state.get('step', 0)
-        order_data = state.get('data', {})
+        data = state.get('data', {})
         
         if step == 1:
             if len(text.strip()) < 2:
-                send_message(chat_id, "Name must be at least 2 characters. Try again:")
+                send(chat, "Name too short. Try again:")
                 return
-            order_data['name'] = text.strip()
-            order_data['user_id'] = chat_id
-            order_data['username'] = username
+            data['name'] = text.strip()
+            data['user_id'] = chat
+            data['username'] = username
             state['step'] = 2
-            user_states[chat_id] = state
-            send_message(chat_id, "Send your phone number (digits only):")
+            USERS[chat] = state
+            send(chat, "Send your phone (digits only):")
             
         elif step == 2:
             phone = ''.join(filter(str.isdigit, text))
             if len(phone) < 10:
-                send_message(chat_id, "Enter valid phone number (at least 10 digits):")
+                send(chat, "Invalid phone. Try again:")
                 return
-            order_data['phone'] = phone
+            data['phone'] = phone
             state['step'] = 3
-            user_states[chat_id] = state
-            send_message(chat_id, "Enter your address (city, street, house, apartment):")
+            USERS[chat] = state
+            send(chat, "Enter your address:")
             
         elif step == 3:
             if len(text.strip()) < 5:
-                send_message(chat_id, "Enter full address (at least 5 characters):")
+                send(chat, "Address too short. Try again:")
                 return
-            order_data['address'] = text.strip()
+            data['address'] = text.strip()
             state['step'] = 4
-            user_states[chat_id] = state
-            send_message(chat_id, "Send product link:")
+            USERS[chat] = state
+            send(chat, "Send product link:")
             
         elif step == 4:
             if not text.startswith(('http://', 'https://')):
-                send_message(chat_id, "This is not a valid link. Send correct link:")
+                send(chat, "Invalid link. Try again:")
                 return
-            if 'items' not in order_data:
-                order_data['items'] = []
-            order_data['items'].append({
-                'link': text,
-                'characteristics': ''
-            })
+            if 'items' not in data:
+                data['items'] = []
+            data['items'].append({'link': text, 'char': ''})
             state['step'] = 5
-            user_states[chat_id] = state
-            send_message(chat_id, "Describe product characteristics (size, color, quantity, etc.):")
+            USERS[chat] = state
+            send(chat, "Describe product (size, color, etc.):")
             
         elif step == 5:
-            if len(order_data['items']) > 0:
-                order_data['items'][-1]['characteristics'] = text.strip()
+            if len(data['items']) > 0:
+                data['items'][-1]['char'] = text.strip()
             
-            items_preview = ""
-            for i, item in enumerate(order_data['items'], 1):
-                items_preview += f"\n{i}. {item['link']}"
-                if item.get('characteristics'):
-                    items_preview += f"\n   {item['characteristics']}"
+            preview = ""
+            for i, item in enumerate(data['items'], 1):
+                preview += f"\n{i}. {item['link']}"
+                if item.get('char'):
+                    preview += f"\n   {item['char']}"
             
-            keyboard = {
+            kb = {
                 "inline_keyboard": [
-                    [{"text": "Add more items", "callback_data": "add_item"}],
-                    [{"text": "Finish order", "callback_data": "finish_order"}]
+                    [{"text": "Add more", "callback_data": "add"}],
+                    [{"text": "Finish", "callback_data": "finish"}]
                 ]
             }
             state['step'] = 6
-            user_states[chat_id] = state
-            send_message(chat_id, f"""
-Item added!
-
-Your items:{items_preview}
-
-What next?
-""", keyboard)
+            USERS[chat] = state
+            send(chat, f"Item added! Your items:{preview}\n\nWhat next?", kb)
     
     elif 'callback_query' in update:
         cb = update['callback_query']
-        chat_id = cb['message']['chat']['id']
+        chat = cb['message']['chat']['id']
         data = cb['data']
         
-        if chat_id == ADMIN_ID:
-            if data.startswith('accept_') or data.startswith('reject_'):
-                order_id = data.split('_')[1]
-                status = "Accepted" if data.startswith('accept_') else "Rejected"
-                if update_order_status(order_id, status):
-                    orders = load_orders()
-                    if str(order_id) in orders:
-                        user_id = orders[str(order_id)]['user_id']
-                        send_message(user_id, f"Your order #{order_id} status changed to: {status}")
-                    send_message(chat_id, f"Order #{order_id} {status.lower()}")
-                    orders = load_orders()
-                    if str(order_id) in orders:
-                        send_message(chat_id, format_order_details(order_id, orders[str(order_id)]))
+        if chat == ADMIN:
+            if data.startswith('acc_') or data.startswith('rej_'):
+                oid = data.split('_')[1]
+                status = "Accepted" if data.startswith('acc_') else "Rejected"
+                orders = load_orders()
+                if str(oid) in orders:
+                    orders[str(oid)]['status'] = status
+                    with open("orders.json", 'w', encoding='utf-8') as f:
+                        json.dump(orders, f, ensure_ascii=False, indent=2)
+                    user_id = orders[str(oid)]['user_id']
+                    send(user_id, f"Order #{oid} status: {status}")
+                    send(chat, f"Order #{oid} {status.lower()}")
                 else:
-                    send_message(chat_id, f"Order #{order_id} not found")
-                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                    send(chat, f"Order #{oid} not found")
+                requests.post(f"{URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                 return
             
-            elif data.startswith('contact_'):
-                order_id = data.split('_')[1]
+            if data.startswith('con_'):
+                oid = data.split('_')[1]
                 orders = load_orders()
-                if str(order_id) in orders:
-                    order = orders[str(order_id)]
-                    user_id = order['user_id']
-                    username = order.get('username', '')
-                    phone = order.get('phone', '')
-                    
-                    text = f"""
-Customer contacts #{order_id}
-
-Name: {order.get('name', '-')}
-Telegram: @{username} (ID: {user_id})
-Phone: +{phone}
-
-You can:
-• Write in Telegram: https://t.me/{username}
-• Call: +{phone}
-"""
-                    send_message(chat_id, text)
+                if str(oid) in orders:
+                    o = orders[str(oid)]
+                    txt = f"Contact #{oid}\n\n"
+                    txt += f"Name: {o.get('name', '-')}\n"
+                    txt += f"User: @{o.get('username', '-')} (ID: {o.get('user_id', '-')})\n"
+                    txt += f"Phone: +{o.get('phone', '-')}\n"
+                    txt += f"Link: https://t.me/{o.get('username', '')}"
+                    send(chat, txt)
                 else:
-                    send_message(chat_id, f"Order #{order_id} not found")
-                requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                    send(chat, f"Order #{oid} not found")
+                requests.post(f"{URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                 return
         
-        if data == 'new_order':
-            user_states[chat_id] = {
-                'step': 1,
-                'data': {}
-            }
-            send_message(chat_id, "Enter your name:")
-            requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+        if data == 'new':
+            USERS[chat] = {'step': 1, 'data': {}}
+            send(chat, "Enter your name:")
+            requests.post(f"{URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
             
-        elif data == 'add_item':
-            state = user_states.get(chat_id, {})
+        elif data == 'add':
+            state = USERS.get(chat, {})
             if state and state.get('step') == 6:
                 state['step'] = 4
-                user_states[chat_id] = state
-                send_message(chat_id, "Send next product link:")
-            requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                USERS[chat] = state
+                send(chat, "Send next product link:")
+            requests.post(f"{URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
             
-        elif data == 'finish_order':
-            state = user_states.get(chat_id)
+        elif data == 'finish':
+            state = USERS.get(chat)
             if state and state.get('step') == 6:
-                order_data = state.get('data', {})
+                data = state.get('data', {})
                 
-                if not order_data.get('items'):
-                    send_message(chat_id, "No items added. Start over.")
-                    user_states.pop(chat_id, None)
-                    requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+                if not data.get('items'):
+                    send(chat, "No items. Start over.")
+                    USERS.pop(chat, None)
+                    requests.post(f"{URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
                     return
                 
-                order_id = get_next_order_number()
+                oid = get_num()
                 order = {
-                    'id': order_id,
-                    'user_id': order_data['user_id'],
-                    'username': order_data['username'],
-                    'name': order_data['name'],
-                    'phone': order_data['phone'],
-                    'address': order_data['address'],
-                    'items': order_data['items'],
+                    'id': oid,
+                    'user_id': data['user_id'],
+                    'username': data['username'],
+                    'name': data['name'],
+                    'phone': data['phone'],
+                    'address': data['address'],
+                    'items': data['items'],
                     'status': 'New',
                     'created': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
                 
                 save_order(order)
                 
-                items_summary = ""
+                items = ""
                 for i, item in enumerate(order['items'], 1):
-                    items_summary += f"\n{i}. {item['link']}"
-                    if item.get('characteristics'):
-                        items_summary += f"\n   {item['characteristics']}"
+                    items += f"\n{i}. {item['link']}"
+                    if item.get('char'):
+                        items += f"\n   {item['char']}"
                 
-                send_message(chat_id, f"""
-Order #{order_id} confirmed!
-
-Your items:{items_summary}
-
-Contacts:
-Name: {order['name']}
-Phone: +{order['phone']}
-Address: {order['address']}
-
-Thank you! Admin will contact you soon.
-Order number: {order_id}
-""")
+                send(chat, f"Order #{oid} confirmed!\n\nYour items:{items}\n\nName: {order['name']}\nPhone: +{order['phone']}\nAddress: {order['address']}\n\nThank you!")
                 
-                send_order_to_admin(order)
-                user_states.pop(chat_id, None)
+                send_admin(order)
+                USERS.pop(chat, None)
                 
-            requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
+            requests.post(f"{URL}/answerCallbackQuery", json={"callback_query_id": cb['id']})
 
 def main():
-    global last_update_id
-    logger.info("Bot started!")
-    send_message(ADMIN_ID, "Bot started successfully!")
+    global LAST_ID
+    print("Bot started")
+    send(ADMIN, "Bot started")
     
     while True:
         try:
-            response = requests.get(
-                f"{API_URL}/getUpdates",
-                params={"offset": last_update_id + 1, "timeout": 30},
-                timeout=35
-            )
-            
-            if response.status_code == 200:
-                updates = response.json().get('result', [])
-                for update in updates:
+            r = requests.get(f"{URL}/getUpdates", params={"offset": LAST_ID + 1, "timeout": 30}, timeout=35)
+            if r.status_code == 200:
+                updates = r.json().get('result', [])
+                for u in updates:
                     try:
-                        process_update(update)
+                        process(u)
                     except Exception as e:
-                        logger.error(f"Update error: {e}")
-            else:
-                logger.error(f"API error: {response.status_code}")
-                
-        except requests.exceptions.Timeout:
-            logger.warning("Timeout, continuing...")
+                        print(f"Error: {e}")
+            time.sleep(1)
         except Exception as e:
-            logger.error(f"Critical error: {e}")
-            
-        time.sleep(1)
+            print(f"Error: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
     main()
