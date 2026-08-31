@@ -154,11 +154,13 @@ def process_update(update):
         print(f"💬 Сообщение от {chat_id}: {text}")
         print(f"🔍 ADMIN_ID: {ADMIN_ID}, chat_id: {chat_id}")
 
-        # ===== СНАЧАЛА ПРОВЕРЯЕМ АДМИН-КОМАНДЫ =====
-        if chat_id == ADMIN_ID and text.startswith('/'):
-            print("👑 Это админ!")
+        # ===== ОБРАБОТКА /start ДЛЯ ВСЕХ =====
+        if text == '/start':
+            print("🆕 Команда /start получена!")
             
-            if text == '/start':
+            # Проверяем, админ ли это
+            if chat_id == ADMIN_ID:
+                print("👑 Это админ! Показываю админ-панель")
                 send_message(chat_id, """👋 **Админ-панель**
 
 Доступные команды:
@@ -168,8 +170,20 @@ def process_update(update):
 /status N СТАТУС - изменить статус
 /start - это сообщение
 """)
+                user_states.pop(chat_id, None)
                 return
-            elif text == '/list_orders':
+            else:
+                print("👤 Это пользователь! Показываю приветствие")
+                keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
+                send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
+                user_states.pop(chat_id, None)
+                return
+
+        # ===== АДМИН-КОМАНДЫ (кроме /start) =====
+        if chat_id == ADMIN_ID and text.startswith('/'):
+            print("👑 Админ-команда:", text)
+            
+            if text == '/list_orders':
                 send_message(chat_id, get_orders_list())
                 return
             elif text.startswith('/delete_order'):
@@ -211,14 +225,6 @@ def process_update(update):
                 except:
                     send_message(chat_id, "❌ Номер должен быть числом.")
                 return
-            return
-
-        # ===== ПОТОМ ПОЛЬЗОВАТЕЛЬСКИЙ /start =====
-        if text == '/start':
-            print("🆕 Пользователь запустил бота!")
-            keyboard = {"inline_keyboard": [[{"text": "🛒 Новый заказ", "callback_data": "new"}]]}
-            send_message(chat_id, "👋 Бот готов!\nНажмите «Новый заказ», чтобы оформить заказ:", keyboard)
-            user_states.pop(chat_id, None)
             return
 
         # ===== ПРОЦЕСС ЗАКАЗА =====
